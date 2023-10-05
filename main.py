@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-from tqdm import tqdm
 
 data = pd.read_csv('TSM.csv')
 
