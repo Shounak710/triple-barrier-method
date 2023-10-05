@@ -1,4 +1,3 @@
-import csv
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
@@ -44,7 +43,7 @@ def get_threshold_events(data, threshold):
 
     return pd.DatetimeIndex([data['Date'][x] for x in t_events])
 
-def add_vertical_barriers(t_events, close, num_of_days=1):
+def add_vertical_barriers(t_events, close, num_of_days=2):
     '''Add the third (vertical) barrier
        We take the events generated in get_threshold_events as the starting point for signal generation
        Number of days is the maximum number of days a trade can stay active
@@ -55,8 +54,18 @@ def add_vertical_barriers(t_events, close, num_of_days=1):
     t1 = dates.searchsorted(t_events + pd.Timedelta(days=num_of_days))
     t1 = t1[t1 < dates.shape[0]] # getting only times that fit within the date range
     t1 = pd.Series(dates[t1], index=t_events[:t1.shape[0]])
+
     return t1
 
-ev = get_threshold_events(data, 0.02)
-print(ev)
-print(add_vertical_barriers(ev, data['Close']))
+# Calculating Bollinger band ranges
+def bbands(close_prices, window=50, no_of_stdev=2):
+    # rolling_mean = close_prices.rolling(window=window).mean()
+    # rolling_std = close_prices.rolling(window=window).std()
+    rolling_mean = close_prices.ewm(span=window).mean()
+    rolling_std = close_prices.ewm(span=window).std()
+
+    upper_band = rolling_mean + (rolling_std * no_of_stdev)
+    lower_band = rolling_mean - (rolling_std * no_of_stdev)
+
+    return rolling_mean, upper_band, lower_band
+
