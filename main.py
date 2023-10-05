@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from mpEngine import mpPandasObj
 
 data = pd.read_csv('TSM.csv')
 
@@ -12,6 +13,15 @@ def get_daily_vol(close_prices):
     baseline_vol = np.sqrt(ewma_vol)
 
     return baseline_vol
+
+def get_horizontal_barriers(baseline_price, baseline_volatility):
+    '''Define a baseline price (usually the closing price) for a datapoint.
+    Get the barrier levels based on that.'''
+
+    upper_barrier = baseline_price * (1+baseline_volatility)
+    lower_barrier = baseline_price * (1-baseline_volatility)
+
+    return upper_barrier, lower_barrier
 
 def get_threshold_events(data, threshold):
     '''Generate events using a symmetric CUSUM filter.
@@ -68,3 +78,62 @@ def bbands(close_prices, window=50, no_of_stdev=2):
 
     return rolling_mean, upper_band, lower_band
 
+def apply_pt_sl_on_t1(close, events, pt_sl, molecule):
+    # apply stop loss/profit taking, if it takes place before t1 (end of event)
+    events_ = events.loc[molecule]
+    out = events_[['t1']].copy(deep=True)
+    if pt_sl[0] > 0:
+        pt = pt_sl[0] * events_['trgt']
+    else:
+        pt = pd.Series(index=events.index)  # NaNs
+
+    if pt_sl[1] > 0:
+        sl = -pt_sl[1] * events_['trgt']
+    else:
+        sl = pd.Series(index=events.index)  # NaNs
+
+    for loc, t1 in events_['t1'].fillna(close.index[-1]).iteritems():
+        df0 = close[loc:t1]  # path prices
+        df0 = (df0 / close[loc] - 1) * events_.at[loc, 'side']  # path returns
+        out.loc[loc, 'sl'] = df0[df0 < sl[loc]].index.min()  # earliest stop loss
+        out.loc[loc, 'pt'] = df0[df0 > pt[loc]].index.min()  # earliest profit taking
+
+    return out
+
+def get_events(close, t_events, pt_sl, target, min_ret, num_threads, 
+              vertical_barrier_times=False, side=None):
+    # 1) Get target
+    target = target.loc[target.index.intersection(t_events)]
+    target = target[target > min_ret]  # min_ret
+
+    # 2) Get vertical barrier (max holding period)
+    if vertical_barrier_times is False:
+        vertical_barrier_times = pd.Series(pd.NaT, index=t_events)
+
+    # 3) Form events object, apply stop loss on vertical barrier
+    if side is None:
+        side_ = pd.Series(1., index=target.index)
+        pt_sl_ = [pt_sl[0], pt_sl[0]]
+    else:
+        side_ = side.loc[target.index]
+        pt_sl_ = pt_sl[:2]
+
+    events = pd.concat({'t1': vertical_barrier_times, 'trgt': target, 'side': side_},
+                        axis=1)
+    events = events.dropna(subset=['trgt'])
+
+    # Apply Triple Barrier
+    df0 = apply_pt_sl_on_t1(close, events, pt_sl_, )
+    df0 = mpPandasObj(func=apply_pt_sl_on_t1,
+                      pd_obj=('molecule', events.index),
+                      num_threads=num_threads,
+                      close=close,
+                      events=events,
+                      pt_sl=pt_sl_)
+
+    events['t1'] = df0.dropna(how='all').min(axis=1)  # pd.min ignores nan
+
+    if side is None:
+        events = events.drop('side', axis=1)
+
+    return events
