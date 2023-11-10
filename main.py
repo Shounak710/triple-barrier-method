@@ -1,29 +1,36 @@
 import pandas as pd
 import numpy as np
+from datetime import timedelta
 
 '''
 Brief description of the methodology of Triple barrier labelling method:
 
 1. Define a baseline price for a datapoint. Using the baseline volatility calculated from ewm method,
 calculate the upper and lower barrier.
+
 2. Vertical barrier will be calculated based on a predetermined number of days
+
 3. Using the vertical barriers, we can break down the stock movement into discrete events
+
 4. A primary model, like a Bollinger band model, will be used to generate buy/sell signals for the stock.
 Our triple barrier labels help determine the accuracy of this signal within every event period.
+
 5. If the Bollinger band model generates a buy signal for a time, but the lower barrier is hit first within the TBM,
 this means the model's prediction would be counted as a false positive. If the primary model generates a sell signal,
 but the upper barrier is hit within the TBM, this would be a false negative. We are concerned with maximizing our true
 positives (recall), and minimizing the false positives (max precision). False negatives don't bother us that much here.
+
 6. Using our primary model and the results from the classification done by TBM, we train a secondary model that will help
-us to increase the precision and recall of our entire setup, and give better trading results.
+us to increase the precision and recall of our entire strategy, and give better trading results.
 '''
 
 class TripleBarrier:
     '''Class for generating the three barrier levels'''
 
-    def __init__(self, data, threshold):
+    def __init__(self, data, threshold, num_of_days):
         self.data = data
         self.threshold = threshold
+        self.num_of_days = num_of_days # Max number of days a trade can stay active
     
     def get_horizontal_barriers(self, baseline_price):
         '''Define a baseline price (usually the closing price) for a datapoint.
@@ -35,7 +42,7 @@ class TripleBarrier:
 
         return upper_barrier, lower_barrier
     
-    def add_vertical_barriers(self, num_of_days=2):
+    def get_vertical_barriers(self):
         '''Add the third (vertical) barrier
         We take the events generated in get_threshold_events as the starting point for signal generation
         Number of days is the maximum number of days a trade can stay active
@@ -44,11 +51,48 @@ class TripleBarrier:
 
         t_events = self.get_threshold_events()
         dates = pd.DatetimeIndex(data['Date'])
-        t1 = dates.searchsorted(t_events + pd.Timedelta(days=num_of_days))
+        t1 = dates.searchsorted(t_events + pd.Timedelta(days=self.num_of_days))
         t1 = t1[t1 < dates.shape[0]] # getting only times that fit within the date range
         t1 = pd.Series(dates[t1], index=t_events[:t1.shape[0]])
 
         return t1
+    
+    def generate_labels(self):
+        '''
+        1. Separate data according to the vertical labels
+        2. In each partition, get the data points that are above the upper barrier, or below the lower barrier
+        3. Depending on whether the upper barrier was breached first or the lower barrier, label +1 or -1
+        4. If no breaches are detected, label it 0
+        '''
+
+        labels = []
+
+        vertical_barriers = self.get_vertical_barriers().dropna().sort_values(ascending=True)
+        
+        for i in range(0, len(vertical_barriers)):
+            # Getting price data from threshold, to the barrier.
+
+            prices = data[
+                (pd.to_datetime(data['Date']) >= vertical_barriers.index[i]) & 
+                (pd.to_datetime(data['Date']) <= vertical_barriers[i])
+            ]
+
+            upper_barrier, lower_barrier = self.get_horizontal_barriers(prices['Adj Close'].iloc[0])
+
+            print("UB: ", upper_barrier, "LB: ", lower_barrier)
+            print(prices)
+            outlying_prices = prices[
+                (prices['Adj Close'] < lower_barrier) | (prices['Adj Close'] > upper_barrier)
+            ]
+
+            if len(outlying_prices) == 0:
+                labels.append(0)
+            elif outlying_prices.iloc[0]['Adj Close'] > upper_barrier:
+                labels.append(1)
+            else:
+                labels.append(-1)
+
+        return labels
 
     def get_vol(self, span=100, vol='ewm'):
         '''Get baseline volatility based on past data'''
@@ -58,7 +102,7 @@ class TripleBarrier:
         squared_returns = daily_returns ** 2
 
         if vol == 'ewm':
-            mean = squared_returns.ewm(span=span).mean()
+            mean = squared_returns.ewm(span=span).mean().mean()
         else:
             mean = squared_returns.mean()
 
@@ -93,91 +137,13 @@ class TripleBarrier:
 
         return pd.DatetimeIndex([data['Date'][x] for x in t_events])
     
-class BollingerBandModel:
-    # Class for calculating Bollinger band ranges
-
-    def __init__(self, data, window, no_of_stdev=2):
-        self.data = data
-        self.window = window
-        self.stdev_count = no_of_stdev # Number of standard deviations used for classification
-
-    def bbands(self):
-        mean, std = self.rolling_mean_and_std()
-        
-        upper_band = mean + (std*self.stdev_count)
-        lower_band = mean - (std*self.stdev_count)
-
-        return upper_band, lower_band
-
-    def rolling_mean_and_std(self):
-        prices = self.data['Adj Close']
-        rolling_mean = prices.rolling(window=self.window).mean()
-        rolling_std = prices.rolling(window=self.window).std()
-
-        return rolling_mean, rolling_std
-    
-    # def apply_pt_sl_on_t1(close, events, pt_sl, molecule):
-    #     # apply stop loss/profit taking, if it takes place before t1 (end of event)
-    #     events_ = events.loc[molecule]
-    #     out = events_[['t1']].copy(deep=True)
-    #     if pt_sl[0] > 0:
-    #         pt = pt_sl[0] * events_['trgt']
-    #     else:
-    #         pt = pd.Series(index=events.index)  # NaNs
-
-    #     if pt_sl[1] > 0:
-    #         sl = -pt_sl[1] * events_['trgt']
-    #     else:
-    #         sl = pd.Series(index=events.index)  # NaNs
-
-    #     for loc, t1 in events_['t1'].fillna(close.index[-1]).iteritems():
-    #         df0 = close[loc:t1]  # path prices
-    #         df0 = (df0 / close[loc] - 1) * events_.at[loc, 'side']  # path returns
-    #         out.loc[loc, 'sl'] = df0[df0 < sl[loc]].index.min()  # earliest stop loss
-    #         out.loc[loc, 'pt'] = df0[df0 > pt[loc]].index.min()  # earliest profit taking
-
-    #     return out
-    
-    # def get_events(close, t_events, pt_sl, target, min_ret, num_threads, 
-    #           vertical_barrier_times=False, side=None):
-    #     # 1) Get target
-    #     target = target.loc[target.index.intersection(t_events)]
-    #     target = target[target > min_ret]  # min_ret
-
-    #     # 2) Get vertical barrier (max holding period)
-    #     if vertical_barrier_times is False:
-    #         vertical_barrier_times = pd.Series(pd.NaT, index=t_events)
-
-    #     # 3) Form events object, apply stop loss on vertical barrier
-    #     if side is None:
-    #         side_ = pd.Series(1., index=target.index)
-    #         pt_sl_ = [pt_sl[0], pt_sl[0]]
-    #     else:
-    #         side_ = side.loc[target.index]
-    #         pt_sl_ = pt_sl[:2]
-
-    #     events = pd.concat({'t1': vertical_barrier_times, 'trgt': target, 'side': side_},
-    #                         axis=1)
-    #     events = events.dropna(subset=['trgt'])
-
-    #     # Apply Triple Barrier
-    #     df0 = apply_pt_sl_on_t1(close, events, pt_sl_, )
-    #     df0 = mpPandasObj(func=apply_pt_sl_on_t1,
-    #                     pd_obj=('molecule', events.index),
-    #                     num_threads=num_threads,
-    #                     close=close,
-    #                     events=events,
-    #                     pt_sl=pt_sl_)
-
-    #     events['t1'] = df0.dropna(how='all').min(axis=1)  # pd.min ignores nan
-
-    #     if side is None:
-    #         events = events.drop('side', axis=1)
-
-    #     return events
-    
 data = pd.read_csv('data/TSM.csv')
-tbcl = TripleBarrier(data = data, threshold = 2)
+tbcl = TripleBarrier(data = data, threshold = 1, num_of_days=100)
+print(tbcl.generate_labels())
 
-bb = BollingerBandModel(data=data, window=50, no_of_stdev=2)
-print(bb.bbands()[0])
+'''
+References:
+1. https://www.sefidian.com/2021/06/26/labeling-financial-data-for-machine-learning/
+2. https://colab.research.google.com/drive/1FmnCJ1CI98khBu88kezLXKqvS7U8Nw_h?usp=sharing
+3. ChatGPT
+'''
