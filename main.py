@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-from datetime import timedelta
 
 '''
 Brief description of the methodology of Triple barrier labelling method:
