@@ -138,7 +138,7 @@ class TripleBarrier:
         return pd.DatetimeIndex([data['Date'][x] for x in t_events])
     
 data = pd.read_csv('data/TSM.csv')
-tbcl = TripleBarrier(data = data, threshold = 1, num_of_days=100)
+tbcl = TripleBarrier(data = data, threshold = 1, num_of_days=50)
 print(tbcl.generate_labels())
 
 '''
