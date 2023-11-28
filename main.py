@@ -49,7 +49,7 @@ class TripleBarrier:
         After the starting point the number of days is maximum days trade can stay active'''
 
         t_events = self.get_threshold_events()
-        dates = pd.DatetimeIndex(data['Date'])
+        dates = pd.DatetimeIndex(self.data['Date'])
         t1 = dates.searchsorted(t_events + pd.Timedelta(days=self.num_of_days))
         t1 = t1[t1 < dates.shape[0]] # getting only times that fit within the date range
         t1 = pd.Series(dates[t1], index=t_events[:t1.shape[0]])
@@ -71,25 +71,25 @@ class TripleBarrier:
         for i in range(0, len(vertical_barriers)):
             # Getting price data from threshold, to the barrier.
 
-            prices = data[
-                (pd.to_datetime(data['Date']) >= vertical_barriers.index[i]) & 
-                (pd.to_datetime(data['Date']) <= vertical_barriers[i])
+            prices = self.data[
+                (pd.to_datetime(self.data['Date']) >= vertical_barriers.index[i]) & 
+                (pd.to_datetime(self.data['Date']) <= vertical_barriers[i])
             ]
 
             upper_barrier, lower_barrier = self.get_horizontal_barriers(prices['Adj Close'].iloc[0])
 
-            print("UB: ", upper_barrier, "LB: ", lower_barrier)
-            print(prices)
+            # print("UB: ", upper_barrier, "LB: ", lower_barrier)
+            # print(prices)
             outlying_prices = prices[
                 (prices['Adj Close'] < lower_barrier) | (prices['Adj Close'] > upper_barrier)
             ]
 
             if len(outlying_prices) == 0:
-                labels.append(0)
+                labels.append({pd.to_datetime(vertical_barriers[i], format="%Y-%m-%D"): 0})
             elif outlying_prices.iloc[0]['Adj Close'] > upper_barrier:
-                labels.append(1)
+                labels.append({outlying_prices.iloc[0]["Date"]: 1})
             else:
-                labels.append(-1)
+                labels.append({outlying_prices.iloc[0]["Date"]: -1})
 
         return labels
 
@@ -118,7 +118,7 @@ class TripleBarrier:
         s_pos = 0
         s_neg = 0
 
-        diff = np.log(data['Close']).diff().dropna()
+        diff = np.log(self.data['Close']).diff().dropna()
         
         for i in diff.index[1:]:
             pos = float(s_pos + diff.loc[i])
@@ -134,11 +134,58 @@ class TripleBarrier:
                 s_pos = 0
                 t_events.append(i)
 
-        return pd.DatetimeIndex([data['Date'][x] for x in t_events])
+        return pd.DatetimeIndex([self.data['Date'][x] for x in t_events])
     
-data = pd.read_csv('data/TSM.csv')
-tbcl = TripleBarrier(data = data, threshold = 1, num_of_days=50)
-print(tbcl.generate_labels())
+    def print_label_data(self):
+        for label_data in self.generate_labels():
+            print(label_data)
+    
+data_tsm = pd.read_csv('data/TSM.csv')
+
+print("TSM stock data: ")
+TripleBarrier(data = data_tsm, threshold = 1, num_of_days=50).print_label_data()
+
+data_aapl = pd.read_csv("data/AAPL.csv")
+
+print("Apple stock data: ")
+TripleBarrier(data = data_aapl, threshold = 1, num_of_days=50).print_label_data()
+
+# For generating more signals, reduce the threshold for signal generation
+print("Apple stock data with threshold 0.5: ")
+TripleBarrier(data = data_aapl, threshold = 0.5, num_of_days=50).print_label_data()
+
+print("Apple stock data with threshold 0.1: ")
+TripleBarrier(data = data_aapl, threshold = 0.1, num_of_days=50).print_label_data()
+
+# For a shorter holding period, reduce the num_of_days.
+# This will lead to more 0 labels, as the vertical barrier will likely be crossed before horizontal ones
+
+print("Apple stock data with threshold 0.1 and only 2 days holding: ")
+TripleBarrier(data = data_aapl, threshold = 0.1, num_of_days=2).print_label_data()
+
+print("Apple stock data with threshold 0.5 and only 2 days holding: ")
+TripleBarrier(data = data_aapl, threshold = 0.5, num_of_days=2).print_label_data()
+
+data_msft = pd.read_csv("data/MSFT.csv")
+
+print("Microsoft stock data: ")
+TripleBarrier(data = data_msft, threshold = 1, num_of_days=50).print_label_data()
+
+# For generating more signals, reduce the threshold for signal generation
+print("Microsoft stock data with threshold 0.5: ")
+TripleBarrier(data = data_msft, threshold = 0.5, num_of_days=50).print_label_data()
+
+print("Microsoft stock data with threshold 0.1: ")
+TripleBarrier(data = data_msft, threshold = 0.1, num_of_days=50).print_label_data()
+
+# For a shorter holding period, reduce the num_of_days.
+# This will lead to more 0 labels, as the vertical barrier will likely be crossed before horizontal ones
+
+print("Microsoft stock data with threshold 0.1 and only 2 days holding: ")
+TripleBarrier(data = data_msft, threshold = 0.1, num_of_days=2).print_label_data()
+
+print("Microsoft stock data with threshold 0.5 and only 2 days holding: ")
+TripleBarrier(data = data_msft, threshold = 0.5, num_of_days=2).print_label_data()
 
 '''
 References:
